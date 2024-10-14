@@ -1,98 +1,141 @@
 import { Command } from "commander";
-const program = new Command();
+import fs from "fs";
+import csv from "fast-csv";
+import path from "path";
 
-// add
+const program = new Command();
+const csvFilePath = path.resolve("expenses.csv");
+
+// Function to initialize CSV file if it doesn't exist
+const initializeCSV = () => {
+  if (!fs.existsSync(csvFilePath)) {
+    const headers = ["id", "description", "amount", "date"];
+    const ws = fs.createWriteStream(csvFilePath);
+    csv.write([headers], { headers: false }).pipe(ws);
+  }
+};
+
+// Function to read expenses from CSV
+const readExpenses = () => {
+  const expenses = [];
+  return new Promise((resolve, reject) => {
+    fs.createReadStream(csvFilePath)
+      .pipe(csv.parse({ headers: true }))
+      .on("data", (row) => expenses.push(row))
+      .on("end", () => resolve(expenses))
+      .on("error", reject);
+  });
+};
+
+// Function to write expenses to CSV
+const writeExpenses = (expenses) => {
+  return new Promise((resolve, reject) => {
+    const ws = fs.createWriteStream(csvFilePath);
+    csv
+      .write(expenses, { headers: true })
+      .pipe(ws)
+      .on("finish", resolve)
+      .on("error", reject);
+  });
+};
+
+// Initialize CSV file
+initializeCSV();
+
+// Add command
 program
   .command("add")
   .description("Add a new item")
   .option("--description <description>", "name of the expense")
-  .option("--amount <amount>", "Amount of the item", parseFloat) // Use parseFloat to convert to a number
-  .action((options) => {
-    console.log(options);
+  .option("--amount <amount>", "Amount of the item", parseFloat)
+  .action(async (options) => {
     const { description, amount } = options;
-    if (
-      !description ||
-      description.trim() === "" ||
-      description === "--amount"
-    ) {
+
+    if (!description || description.trim() === "") {
       console.error("Error: Description is required and cannot be empty.");
       return;
     }
-
-    // Validate that amount is a positive number
     if (typeof amount !== "number" || amount <= 0) {
       console.error("Error: Amount must be a positive number.");
       return;
     }
 
+    const expenses = await readExpenses();
+    const newExpense = {
+      id: expenses.length + 1,
+      description,
+      amount,
+      date: new Date().toISOString()
+    };
+    expenses.push(newExpense);
+    await writeExpenses(expenses);
+
     console.log(`Added item: ${description} with amount: ${amount}`);
   });
 
-// delete
+// Delete command
 program
   .command("delete")
   .description("delete a record")
   .option("--id <id>", "id of the expense", parseInt)
-  .action((options) => {
-    console.log(options);
+  .action(async (options) => {
     const { id } = options;
     if (!id) {
       console.error("Error: Id is required and cannot be empty.");
       return;
     }
 
-    // Validate that amount is a positive number
-    if (typeof id !== "number" || id <= 0 || id % 2 != 0) {
-      console.error("Error: Invalid id provided.");
+    const expenses = await readExpenses();
+    const updatedExpenses = expenses.filter(
+      (expense) => parseInt(expense.id) !== id
+    );
+
+    if (updatedExpenses.length === expenses.length) {
+      console.error("Error: No expense found with the provided ID.");
       return;
     }
 
-    console.log(`Deleted item with: ${id}`);
+    await writeExpenses(updatedExpenses);
+    console.log(`Deleted item with ID: ${id}`);
   });
 
-//   get list
+// List command
 program
   .command("list")
   .description("get list of all expenses")
-  .action((options) => {
-    console.log(`List of expenses`);
+  .action(async () => {
+    const expenses = await readExpenses();
+    console.log("List of expenses:");
+    expenses.forEach((expense) => {
+      console.log(
+        `ID: ${expense.id}, Description: ${expense.description}, Amount: ${expense.amount}, Date: ${expense.date}`
+      );
+    });
   });
 
-// summary
+// Summary command
 program
   .command("summary")
   .description("get summary of all expenses")
   .option("--month <month>", "summary for the month", parseInt)
-  .action((options) => {
-    const isEmpty = (options) => Object.entries(options).length === 0;
+  .action(async (options) => {
+    const expenses = await readExpenses();
     const { month } = options;
-    if (isEmpty(options)) {
-      console.log("entire summary");
-    } else if (!month) {
-      console.log("Month should be a number");
-    } else if (month > 1 && month < 13) {
-      console.log("Summary for the month");
-    } else {
-      console.log("Please enter a valid month");
+
+    if (month && (month < 1 || month > 12)) {
+      console.log("Please enter a valid month (1-12).");
+      return;
     }
+
+    let total = 0;
+    expenses.forEach((expense) => {
+      const expenseMonth = new Date(expense.date).getMonth() + 1; // Assuming you have a date field
+      if (!month || expenseMonth === month) {
+        total += parseFloat(expense.amount);
+      }
+    });
+
+    console.log(`Total expenses: ${total}`);
   });
 
 program.parse();
-
-if (program.args[0] == "list" && program.args.length > 1) {
-  console.error(
-    'Error: The command "list" does not accept any additional arguments.'
-  );
-  process.exit(1);
-}
-
-const options = program.opts();
-const limit = program.first ? 1 : undefined;
-console.log(program.args[0].split(options.separator, limit));
-
-// $ expense-tracker add --description "Lunch" --amount 20
-// $ expense-tracker list
-// $ expense-tracker summary
-// $ expense-tracker delete --id 1
-// $ expense-tracker summary
-// $ expense-tracker summary --month 8
